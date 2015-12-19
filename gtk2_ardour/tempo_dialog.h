@@ -44,6 +44,7 @@ public:
 	double get_bpm ();
 	double get_note_type ();
 	bool   get_bbt_time (Timecode::BBT_Time&);
+	ARDOUR::TempoSection::TempoSectionType get_tempo_type ();
 
 private:
 	void init (const Timecode::BBT_Time& start, double, double, bool);
@@ -59,6 +60,9 @@ private:
 	typedef std::map<std::string,float> NoteTypes;
 	NoteTypes note_types;
 
+	typedef std::map<std::string, ARDOUR::TempoSection::TempoSectionType> TempoTypes;
+	TempoTypes tempo_types;
+
 	bool tapped;      // whether the tap-tempo button has been clicked
 	gint64 last_tap;
 	double average_interval;
@@ -72,6 +76,8 @@ private:
 	Gtk::Label   when_beat_label;
 	Gtk::Label   pulse_selector_label;
 	Gtk::Button  tap_tempo_button;
+	Gtk::ComboBoxText tempo_type;
+
 };
 
 class MeterDialog : public ArdourDialog
