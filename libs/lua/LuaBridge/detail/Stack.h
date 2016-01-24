@@ -2,6 +2,7 @@
 /*
   https://github.com/vinniefalco/LuaBridge
 
+  Copyright 2016, Robin Gareus <robin@gareus.org>
   Copyright 2012, Vinnie Falco <vinnie.falco@gmail.com>
   Copyright 2007, Nathan Reed
 
@@ -55,6 +56,46 @@ struct Stack <lua_CFunction>
   static lua_CFunction get (lua_State* L, int index)
   {
     return lua_tocfunction (L, index);
+  }
+};
+
+//------------------------------------------------------------------------------
+/**
+    Stack specialization for passing references to built-in types.
+
+    This allows to call functions using primitives, but
+    the value assigned by the C++ function is *lost*.
+
+    http://sourceforge.net/p/luabind/mailman/message/32692027/
+
+    Alternatives:
+     - wrap all C++ function that have non const reference arguments
+    (cleanest solution)
+
+     - use a struct to wrap the value (not a primitive)
+    (needs major work to special case arguments in CFunc::)
+
+     - wrap the function and provide the assigned value
+     as addition return values
+
+    Either would place hard constraints on the lua code though.
+
+    We currently only need this for Ardour::Editor::do_import() framecnt_t&
+    and the returned position is not important.
+*/
+template <>
+struct Stack <int64_t &>
+{
+  static inline void push (lua_State* L, int64_t &value)
+  {
+    lua_pushnumber (L, static_cast <lua_Number> (value));
+  }
+
+  static inline int64_t& get (lua_State* L, int index)
+  {
+    int64_t l = static_cast <int64_t> (luaL_checknumber (L, index));
+    boost::reference_wrapper<int64_t> r (l);
+    return r.get();
   }
 };
 
@@ -278,6 +319,70 @@ struct Stack <unsigned long const&>
   static inline unsigned long get (lua_State* L, int index)
   {
     return static_cast <unsigned long> (luaL_checknumber (L, index));
+  }
+};
+
+//------------------------------------------------------------------------------
+/**
+    Stack specialization for `long long`.
+*/
+template <>
+struct Stack <long long>
+{
+  static inline void push (lua_State* L, long long value)
+  {
+    lua_pushinteger (L, static_cast <lua_Integer> (value));
+  }
+
+  static inline long long get (lua_State* L, int index)
+  {
+    return static_cast <long long> (luaL_checkinteger (L, index));
+  }
+};
+
+template <>
+struct Stack <long long const&>
+{
+  static inline void push (lua_State* L, long long value)
+  {
+    lua_pushnumber (L, static_cast <lua_Number> (value));
+  }
+
+  static inline long long get (lua_State* L, int index)
+  {
+    return static_cast <long long> (luaL_checknumber (L, index));
+  }
+};
+
+//------------------------------------------------------------------------------
+/**
+    Stack specialization for `unsigned long long`.
+*/
+template <>
+struct Stack <unsigned long long>
+{
+  static inline void push (lua_State* L, unsigned long long value)
+  {
+    lua_pushinteger (L, static_cast <lua_Integer> (value));
+  }
+
+  static inline unsigned long long get (lua_State* L, int index)
+  {
+    return static_cast <unsigned long long> (luaL_checkinteger (L, index));
+  }
+};
+
+template <>
+struct Stack <unsigned long long const&>
+{
+  static inline void push (lua_State* L, unsigned long long value)
+  {
+    lua_pushnumber (L, static_cast <lua_Number> (value));
+  }
+
+  static inline unsigned long long get (lua_State* L, int index)
+  {
+    return static_cast <unsigned long long> (luaL_checknumber (L, index));
   }
 };
 

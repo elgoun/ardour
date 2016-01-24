@@ -1,7 +1,8 @@
 //------------------------------------------------------------------------------
 /*
   https://github.com/vinniefalco/LuaBridge
-  
+
+  Copyright 2016, Robin Gareus <robin@gareus.org>
   Copyright 2012, Vinnie Falco <vinnie.falco@gmail.com>
 
   License: The MIT License (http://www.opensource.org/licenses/mit-license.php)
@@ -290,6 +291,51 @@ struct CFunc
     }
   };
 
+  template <class MemFnPtr, class T,
+           class ReturnType = typename FuncTraits <MemFnPtr>::ReturnType>
+  struct CallMemberPtr
+  {
+    typedef typename FuncTraits <MemFnPtr>::Params Params;
+
+    static int f (lua_State* L)
+    {
+      assert (isfulluserdata (L, lua_upvalueindex (1)));
+      boost::shared_ptr<T>* const t = Userdata::get <boost::shared_ptr<T> > (L, 1, false);
+      T* const tt = t->get();
+      MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
+      assert (fnptr != 0);
+      ArgList <Params, 2> args (L);
+      Stack <ReturnType>::push (L, FuncTraits <MemFnPtr>::call (tt, fnptr, args));
+      return 1;
+    }
+  };
+
+
+  template <class MemFnPtr, class T,
+           class ReturnType = typename FuncTraits <MemFnPtr>::ReturnType>
+  struct CallMemberWPtr
+  {
+    typedef typename FuncTraits <MemFnPtr>::Params Params;
+
+    static int f (lua_State* L)
+    {
+      assert (isfulluserdata (L, lua_upvalueindex (1)));
+      boost::weak_ptr<T>* const tw = Userdata::get <boost::weak_ptr<T> > (L, 1, false);
+      boost::shared_ptr<T> const t = tw->lock();
+      if (!tw) {
+        return luaL_error (L, "cannot lock weak_ptr");
+      }
+      T* const tt = t.get();
+      MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
+      assert (fnptr != 0);
+      ArgList <Params, 2> args (L);
+      Stack <ReturnType>::push (L, FuncTraits <MemFnPtr>::call (tt, fnptr, args));
+      return 1;
+    }
+  };
+
+
+
   //----------------------------------------------------------------------------
   /**
       lua_CFunction to call a class member function with no return value.
@@ -332,6 +378,48 @@ struct CFunc
       return 0;
     }
   };
+
+  template <class MemFnPtr, class T>
+  struct CallMemberPtr <MemFnPtr, T, void>
+  {
+    typedef typename FuncTraits <MemFnPtr>::Params Params;
+
+    static int f (lua_State* L)
+    {
+      assert (isfulluserdata (L, lua_upvalueindex (1)));
+      boost::shared_ptr<T>* const t = Userdata::get <boost::shared_ptr<T> > (L, 1, false);
+      T* const tt = t->get();
+      MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
+      assert (fnptr != 0);
+      ArgList <Params, 2> args (L);
+      FuncTraits <MemFnPtr>::call (tt, fnptr, args);
+      return 0;
+    }
+  };
+
+  template <class MemFnPtr, class T>
+  struct CallMemberWPtr <MemFnPtr, T, void>
+  {
+    typedef typename FuncTraits <MemFnPtr>::Params Params;
+
+    static int f (lua_State* L)
+    {
+      assert (isfulluserdata (L, lua_upvalueindex (1)));
+      boost::weak_ptr<T>* const tw = Userdata::get <boost::weak_ptr<T> > (L, 1, false);
+      boost::shared_ptr<T> const t = tw->lock();
+      if (!t) {
+        return luaL_error (L, "cannot lock weak_ptr");
+      }
+      T* const tt = t.get();
+      MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
+      assert (fnptr != 0);
+      ArgList <Params, 2> args (L);
+      FuncTraits <MemFnPtr>::call (tt, fnptr, args);
+      return 0;
+    }
+  };
+
+
 
   //--------------------------------------------------------------------------
   /**
@@ -396,6 +484,30 @@ struct CFunc
     }
   };
 
+  template <class MemFnPtr>
+  struct CallMemberPtrFunctionHelper
+  {
+    typedef typename FuncTraits <MemFnPtr>::ClassType T;
+    static void add (lua_State* L, char const* name, MemFnPtr mf)
+    {
+      new (lua_newuserdata (L, sizeof (MemFnPtr))) MemFnPtr (mf);
+      lua_pushcclosure (L, &CallMemberPtr <MemFnPtr, T>::f, 1);
+      rawsetfield (L, -3, name); // class table
+    }
+  };
+
+  template <class MemFnPtr>
+  struct CallMemberWPtrFunctionHelper
+  {
+    typedef typename FuncTraits <MemFnPtr>::ClassType T;
+    static void add (lua_State* L, char const* name, MemFnPtr mf)
+    {
+      new (lua_newuserdata (L, sizeof (MemFnPtr))) MemFnPtr (mf);
+      lua_pushcclosure (L, &CallMemberWPtr <MemFnPtr, T>::f, 1);
+      rawsetfield (L, -3, name); // class table
+    }
+  };
+
   //--------------------------------------------------------------------------
   /**
       __gc metamethod for a class.
@@ -405,6 +517,11 @@ struct CFunc
   {
     Userdata* const ud = Userdata::getExact <C> (L, 1);
     ud->~Userdata ();
+    return 0;
+  }
+
+  static int gcNOOPMethod (lua_State* L)
+  {
     return 0;
   }
 
@@ -425,6 +542,20 @@ struct CFunc
   }
 
   //--------------------------------------------------------------------------
+
+  /**
+      lua_CFunction to get a constant (enum)
+  */
+  template <typename U>
+  static int getConst (lua_State* L)
+  {
+    U *v = static_cast <U *> (lua_touserdata (L, lua_upvalueindex (1)));
+    assert (v);
+    Stack <U>::push (L, *v);
+    return 1;
+  }
+
+  //--------------------------------------------------------------------------
   /**
       lua_CFunction to set a class data member.
 
@@ -438,5 +569,186 @@ struct CFunc
     T C::** mp = static_cast <T C::**> (lua_touserdata (L, lua_upvalueindex (1)));
     c->**mp = Stack <T>::get (L, 2);
     return 0;
+  }
+
+  //--------------------------------------------------------------------------
+
+  // metatable callback for "array[index]"
+  template <typename T>
+  static int array_index (lua_State* L) {
+    T** parray = (T**) luaL_checkudata (L, 1, typeid(T).name());
+    int const index = luabridge::Stack<int>::get (L, 2);
+    luabridge::Stack<T>::push (L, (*parray)[index-1]);
+    return 1;
+  }
+
+  // metatable callback for "array[index] = value"
+  template <typename T>
+  static int array_newindex (lua_State* L) {
+    T** parray = (T**) luaL_checkudata (L, 1, typeid(T).name());
+    int const index = luabridge::Stack<int>::get (L, 2);
+    T const value = luabridge::Stack<T>::get (L, 3);
+    (*parray)[index-1] = value;
+    return 0;
+  }
+
+  template <typename T>
+  static int getArray (lua_State* L) {
+    T *v = luabridge::Stack<T*>::get (L, 1);
+    T** parray = (T**) lua_newuserdata(L, sizeof(T**));
+    *parray = v;
+    luaL_getmetatable(L, typeid(T).name());
+    lua_setmetatable(L, -2);
+    return 1;
+  }
+
+  // copy complete c array to lua table
+  template <typename T>
+  static int getTable (lua_State* L) {
+    T *v = luabridge::Stack<T*>::get (L, 1);
+    const int cnt = luabridge::Stack<int>::get (L, 2);
+    LuaRef t (L);
+    t = newTable (L);
+    for (int i = 0; i < cnt; ++i) {
+      t[i + 1] = v[i];
+    }
+    t.push(L);
+    return 1;
+  }
+
+  // copy lua table to c array
+  template <typename T>
+  static int setTable (lua_State* L) {
+    T *v = luabridge::Stack<T*>::get (L, 1);
+    LuaRef t (LuaRef::fromStack(L, 2));
+    const int cnt = luabridge::Stack<int>::get (L, 3);
+    for (int i = 0; i < cnt; ++i) {
+      v[i] = t[i + 1];
+    }
+    return 0;
+  }
+
+
+  //--------------------------------------------------------------------------
+  /**
+    C++ STL iterators
+   */
+
+  // read lua table into C++ std::list
+  template <class T, class C>
+  static int tableToListHelper (lua_State *L, C * const t)
+  {
+    if (!t) { return luaL_error (L, "invalid pointer to std::list<>/std::vector"); }
+    lua_pushvalue (L, -1);
+    lua_pushnil (L);
+    while (lua_next (L, -2)) {
+      lua_pushvalue (L, -2);
+      T const value = Stack<T>::get (L, -2);
+      t->push_back (value);
+      lua_pop (L, 2);
+    }
+    lua_pop (L, 1);
+    lua_pop (L, 2);
+    Stack<C>::push (L, *t);
+    return 1;
+  }
+
+  template <class T, class C>
+  static int tableToList (lua_State *L)
+  {
+    C * const t = Userdata::get<C> (L, 1, false);
+    return tableToListHelper<T, C> (L, t);
+  }
+
+  template <class T, class C>
+  static int ptrTableToList (lua_State *L)
+  {
+    boost::shared_ptr<C> const* const t = Userdata::get<boost::shared_ptr<C> > (L, 1, true);
+    if (!t) { return luaL_error (L, "cannot derefencee shared_ptr"); }
+    return tableToListHelper<T, C> (L, t->get());
+  }
+
+  //--------------------------------------------------------------------------
+  template <class T, class C>
+  static int listIterIter (lua_State *L) {
+    typedef typename C::const_iterator IterType;
+    IterType * const end = static_cast <IterType * const> (lua_touserdata (L, lua_upvalueindex (2)));
+    IterType * const iter = static_cast <IterType * const> (lua_touserdata (L, lua_upvalueindex (1)));
+    assert (end);
+    assert (iter);
+    if ((*iter) == (*end)) {
+      return 0;
+    }
+    Stack <T>::push (L, **iter);
+    ++(*iter);
+    return 1;
+  }
+
+  // generate an iterator
+  template <class T, class C>
+  static int listIterHelper (lua_State *L, C * const t)
+  {
+    if (!t) { return luaL_error (L, "invalid pointer to std::list<>/std::vector"); }
+    typedef typename C::const_iterator IterType;
+    new (lua_newuserdata (L, sizeof (IterType*))) IterType (t->begin());
+    new (lua_newuserdata (L, sizeof (IterType*))) IterType (t->end());
+    lua_pushcclosure (L, listIterIter<T, C>, 2);
+    return 1;
+  }
+
+  template <class T, class C>
+  static int listIter (lua_State *L)
+  {
+    C * const t = Userdata::get <C> (L, 1, false);
+    return listIterHelper<T, C> (L, t);
+  }
+
+  template <class T, class C>
+  static int ptrListIter (lua_State *L)
+  {
+    boost::shared_ptr<C> const* const t = Userdata::get <boost::shared_ptr<C> >(L, 1, true);
+    if (!t) { return luaL_error (L, "cannot derefencee shared_ptr"); }
+    return listIterHelper<T, C> (L, t->get());
+  }
+
+  //--------------------------------------------------------------------------
+  // generate table from std::list
+  template <class T, class C>
+  static int listToTableHelper (lua_State *L, C const* const t)
+  {
+    if (!t) { return luaL_error (L, "invalid pointer to std::list<>/std::vector"); }
+#if 0 // direct lua api
+    lua_createtable(L, t->size(), 0);
+    int newTable = lua_gettop(L);
+    int index = 1;
+    for (typename C::const_iterator iter = t->begin(); iter != t->end(); ++iter, ++index) {
+      Stack<T>::push(L, (*iter));
+      lua_rawseti (L, newTable, index);
+    }
+#else // luabridge way
+    LuaRef v (L);
+    v = newTable (L);
+    int index = 1;
+    for (typename C::const_iterator iter = t->begin(); iter != t->end(); ++iter, ++index) {
+      v[index] = (*iter);
+    }
+    v.push(L);
+#endif
+    return 1;
+  }
+
+  template <class T, class C>
+  static int listToTable (lua_State *L)
+  {
+    C const* const t = Userdata::get <C> (L, 1, true);
+    return listToTableHelper<T, C> (L, t);
+  }
+
+  template <class T, class C>
+  static int ptrListToTable (lua_State *L)
+  {
+    boost::shared_ptr<C> const* const t = Userdata::get <boost::shared_ptr<C> > (L, 1, true);
+    if (!t) { return luaL_error (L, "cannot derefencee shared_ptr"); }
+    return listToTableHelper<T, C> (L, t->get());
   }
 };
