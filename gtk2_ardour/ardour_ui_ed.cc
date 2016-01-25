@@ -50,6 +50,7 @@
 #include "editor.h"
 #include "actions.h"
 #include "meterbridge.h"
+#include "luawindow.h"
 #include "mixer_ui.h"
 #include "startup.h"
 #include "window_manager.h"
@@ -87,6 +88,22 @@ ARDOUR_UI::create_editor ()
 
 	editor->Realized.connect (sigc::mem_fun (*this, &ARDOUR_UI::editor_realized));
 	editor->signal_window_state_event().connect (sigc::bind (sigc::mem_fun (*this, &ARDOUR_UI::main_window_state_event_handler), true));
+
+	return 0;
+}
+
+int
+ARDOUR_UI::create_luawindow ()
+
+{
+	try {
+		luawindow = LuaWindow::instance ();
+	}
+	catch (failed_constructor& err) {
+		return -1;
+	}
+
+	luawindow->signal_window_state_event().connect (sigc::bind (sigc::mem_fun (*this, &ARDOUR_UI::main_window_state_event_handler), false));
 
 	return 0;
 }
@@ -235,6 +252,7 @@ if (Profile->get_mixbus())
 	ActionManager::register_action (common_actions, X_("toggle-mixer"), S_("Window|Mixer"),  sigc::mem_fun(*this, &ARDOUR_UI::toggle_mixer_window));
 	ActionManager::register_action (common_actions, X_("toggle-editor-mixer"), _("Toggle Editor+Mixer"),  sigc::mem_fun(*this, &ARDOUR_UI::toggle_editor_mixer));
 	ActionManager::register_action (common_actions, X_("toggle-meterbridge"), S_("Window|Meterbridge"),  sigc::mem_fun(*this, &ARDOUR_UI::toggle_meterbridge));
+	ActionManager::register_action (common_actions, X_("toggle-luawindow"), S_("Window|Scripting"),  sigc::mem_fun(*this, &ARDOUR_UI::toggle_luawindow));
 
 	ActionManager::register_action (common_actions, X_("reattach-all-tearoffs"), _("Reattach All Tearoffs"), sigc::mem_fun (*this, &ARDOUR_UI::reattach_all_tearoffs));
 

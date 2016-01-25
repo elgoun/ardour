@@ -122,6 +122,7 @@ typedef uint64_t microseconds_t;
 #include "keyboard.h"
 #include "keyeditor.h"
 #include "location_ui.h"
+#include "luawindow.h"
 #include "main_clock.h"
 #include "missing_file_dialog.h"
 #include "missing_plugin_dialog.h"
@@ -261,6 +262,7 @@ ARDOUR_UI::ARDOUR_UI (int *argcp, char **argvp[], const char* localedir)
 	, last_key_press_time (0)
 	, save_as_dialog (0)
 	, meterbridge (0)
+	, luawindow (0)
 	, speaker_config_window (X_("speaker-config"), _("Speaker Configuration"))
 	, key_editor (X_("key-editor"), _("Key Bindings"))
 	, rc_option_editor (X_("rc-options-editor"), _("Preferences"))
@@ -647,6 +649,7 @@ ARDOUR_UI::~ARDOUR_UI ()
 		delete secondary_clock;
 		delete _process_thread;
 		delete meterbridge;
+		delete luawindow;
 		delete editor;
 		delete mixer;
 		delete nsm;
