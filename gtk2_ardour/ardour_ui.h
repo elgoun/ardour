@@ -254,6 +254,9 @@ class ARDOUR_UI : public Gtkmm2ext::UI, public ARDOUR::SessionHandlePtr
 
 	void start_duplicate_routes ();
 
+	void add_lua_script ();
+	void remove_lua_script ();
+
 	void add_video (Gtk::Window* float_window);
 	void remove_video ();
 	void start_video_server_menu (Gtk::Window* float_window);
