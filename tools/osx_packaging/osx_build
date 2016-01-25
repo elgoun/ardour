@@ -125,6 +125,7 @@ MidiMaps=$Shared/midi_maps
 ExportFormats=$Shared/export
 Templates=$Shared/templates
 PatchFiles=$Shared/patchfiles
+LuaScripts=$Shared/scripts
 MackieControl=$Shared/mcp
 
 if [ x$PRINT_SYSDEPS != x ] ; then
@@ -162,6 +163,7 @@ mkdir -p $Frameworks/modules
 mkdir -p $Etc
 mkdir -p $MackieControl
 mkdir -p $PatchFiles
+mkdir -p $LuaScripts
 
 # maybe set variables
 env=""
@@ -372,6 +374,12 @@ done
 # got to be careful with names here
 for x in $BUILD_ROOT/../patchfiles/*.midnam ; do
     cp "$x" $PatchFiles
+done
+
+# Lua Script Files
+# got to be careful with names here
+for x in $BUILD_ROOT/../scripts/*.lua ; do
+    cp "$x" $LuaScripts
 done
 
 # MackieControl data
