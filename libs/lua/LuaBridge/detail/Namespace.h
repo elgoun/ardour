@@ -2,6 +2,7 @@
 /*
   https://github.com/vinniefalco/LuaBridge
 
+  Copyright 2016, Robin Gareus <robin@gareus.org>
   Copyright 2012, Vinnie Falco <vinnie.falco@gmail.com>
   Copyright 2007, Nathan Reed
 
@@ -482,6 +483,8 @@ private:
       }
       else
       {
+        lua_pop (L, 1);
+        lua_rawgetp (L, LUA_REGISTRYINDEX, ClassInfo <T>::getStaticKey ());
         rawgetfield (L, -1, "__class");
         rawgetfield (L, -1, "__const");
 
@@ -674,6 +677,7 @@ private:
       return *this;
     }
 
+
     //--------------------------------------------------------------------------
     /**
       Add or replace a property member.
@@ -797,6 +801,21 @@ private:
       return *this;
     }
 
+    template <class MemFn>
+    Class <T>& addPtrFunction (char const* name, MemFn mf)
+    {
+      CFunc::CallMemberPtrFunctionHelper <MemFn>::add (L, name, mf);
+      return *this;
+    }
+
+    template <class MemFn>
+    Class <T>& addWPtrFunction (char const* name, MemFn mf)
+    {
+      CFunc::CallMemberWPtrFunctionHelper <MemFn>::add (L, name, mf);
+      return *this;
+    }
+
+
     //--------------------------------------------------------------------------
     /**
         Add or replace a member lua_CFunction.
@@ -809,6 +828,17 @@ private:
       lua_pushcclosure (L, &CFunc::CallMemberCFunction <T>::f, 1);
       rawsetfield (L, -3, name); // class table
 
+      return *this;
+    }
+
+    // custom callback - extend existing classes
+    // with non-class member functions (e.g STL iterator)
+    Class <T>& addExtCFunction (char const* name, int (*const fp)(lua_State*))
+    {
+      typedef int (*FP)(lua_State*);
+      assert (lua_istable (L, -1));
+      lua_pushcclosure (L, fp, 0);
+      rawsetfield (L, -3, name); // class table
       return *this;
     }
 
@@ -828,6 +858,28 @@ private:
 
       return *this;
     }
+
+    /**
+        Add or replace a static const data
+    */
+    template <typename U>
+      Class <T>& addConst (char const* name, const U val)
+      {
+        assert (lua_istable (L, -1));
+
+        rawgetfield (L, -1, "__propget"); // static
+        new (lua_newuserdata (L, sizeof (val))) U (val);
+        lua_pushcclosure (L, &CFunc::getConst <U>, 1);
+        rawsetfield (L, -2, name);
+        lua_pop (L, 1);
+
+        rawgetfield (L, -1, "__propset"); // static
+        lua_pushstring (L, name);
+        lua_pushcclosure (L, &CFunc::readOnlyError, 1);
+        rawsetfield (L, -2, name);
+        lua_pop (L, 1);
+        return *this;
+      }
 
     //--------------------------------------------------------------------------
     /**
@@ -859,7 +911,93 @@ private:
 
       return *this;
     }
+
+    Class <T>& addVoidConstructor ()
+    {
+      return addConstructor <void (*) ()> ();
+    }
+
   };
+
+  template <typename T>
+  class Array : public ClassBase
+  {
+  public:
+    Array (char const* name, Namespace const* parent) : ClassBase (parent->L)
+    {
+      m_stackSize = parent->m_stackSize + 3;
+      parent->m_stackSize = 0;
+
+#if 0 // don't allow to duplicates handlers for same array-type
+      assert (lua_istable (L, -1));
+      lua_rawgetp (L, LUA_REGISTRYINDEX, ClassInfo <T>::getClassKey ());
+      if (lua_istable (L, -1)) {
+        lua_pushnil (L);
+        lua_pushnil (L);
+        return;
+      }
+      lua_pop (L, 1);
+#endif
+
+      assert (lua_istable (L, -1));
+      rawgetfield (L, -1, name);
+
+      if (lua_isnil (L, -1))
+      {
+        lua_pop (L, 1);
+
+        // register array access in global namespace
+        luaL_newmetatable (L, typeid(T).name());
+        lua_pushcclosure (L, CFunc::array_index<T>, 0);
+        lua_setfield(L, -2, "__index");
+        lua_pushcclosure (L, CFunc::array_newindex<T>, 0);
+        lua_setfield(L, -2, "__newindex");
+        lua_pop (L, 1);
+
+        createConstTable (name);
+        lua_pushcfunction (L, &CFunc::gcMetaMethod <T>);
+        rawsetfield (L, -2, "__gc");
+
+        createClassTable (name);
+        lua_pushcfunction (L, &CFunc::gcMetaMethod <T>);
+        rawsetfield (L, -2, "__gc");
+
+        createStaticTable (name);
+
+        // Map T back to its tables.
+        lua_pushvalue (L, -1);
+        lua_rawsetp (L, LUA_REGISTRYINDEX, ClassInfo <T>::getStaticKey ());
+        lua_pushvalue (L, -2);
+        lua_rawsetp (L, LUA_REGISTRYINDEX, ClassInfo <T>::getClassKey ());
+        lua_pushvalue (L, -3);
+        lua_rawsetp (L, LUA_REGISTRYINDEX, ClassInfo <T>::getConstKey ());
+
+        // add :array() function
+        assert (lua_istable (L, -1));
+        lua_pushcclosure (L, &CFunc::getArray <T>, 0);
+        rawsetfield (L, -3, "array"); // class table
+
+        lua_pushcclosure (L, &CFunc::getTable <T>, 0);
+        rawsetfield (L, -3, "get_table"); // class table
+
+        lua_pushcclosure (L, &CFunc::setTable <T>, 0);
+        rawsetfield (L, -3, "set_table"); // class table
+      }
+      else
+      {
+        lua_pushnil (L);
+        lua_pushnil (L);
+      }
+    }
+
+    Namespace endArray ()
+    {
+      return Namespace (this);
+    }
+  };
+
+
+
 
 private:
   //----------------------------------------------------------------------------
@@ -1032,6 +1170,25 @@ public:
     return *this;
   }
 
+  template <typename U>
+  Namespace& addConst (char const* name, const U val)
+  {
+    assert (lua_istable (L, -1));
+    rawgetfield (L, -1, "__propget");
+    new (lua_newuserdata (L, sizeof (val))) U (val);
+    lua_pushcclosure (L, &CFunc::getConst <U>, 1);
+    rawsetfield (L, -2, name);
+    lua_pop (L, 1);
+
+    rawgetfield (L, -1, "__propset");
+    assert (lua_istable (L, -1));
+    lua_pushstring (L, name);
+    lua_pushcclosure (L, &CFunc::readOnlyError, 1);
+    rawsetfield (L, -2, name);
+    lua_pop (L, 1);
+    return *this;
+  }
+
   //----------------------------------------------------------------------------
   /**
       Add or replace a property.
@@ -1086,6 +1243,19 @@ public:
     return *this;
   }
 
+
+  //----------------------------------------------------------------------------
+  /**
+      Add or replace a array type
+  */
+
+  template <typename T>
+  Namespace registerArray (char const* name)
+  {
+    return Array <T> (name, this).endArray();
+  }
+
+
   //----------------------------------------------------------------------------
   /**
       Add or replace a lua_CFunction.
@@ -1108,6 +1278,124 @@ public:
     return Class <T> (name, this);
   }
 
+  template <class T>
+  Class <boost::shared_ptr<T> > beginPtrClass (char const* name)
+  {
+    return Class <boost::shared_ptr<T> > (name, this);
+  }
+
+  template <class T>
+  Class <boost::weak_ptr<T> > beginWPtrClass (char const* name)
+  {
+    return Class <boost::weak_ptr<T> > (name, this);
+  }
+
+
+  //----------------------------------------------------------------------------
+
+  template <class K, class V>
+  Class<std::map<K, V> > beginStdMap (char const* name)
+  {
+    typedef std::map<K, V> LT;
+    typedef std::pair<const K, V> T;
+
+    return beginClass<LT> (name)
+      .addVoidConstructor ()
+      .addFunction ("empty", &LT::empty)
+      .addFunction ("size", &LT::size)
+      .addFunction ("clear", (void (LT::*)())&LT::clear)
+      .addFunction ("count", (void (LT::*)())&LT::count)
+      .addExtCFunction ("add", &CFunc::tableToMap<K, V>)
+      .addExtCFunction ("iter", &CFunc::mapIter<K, V>)
+      .addExtCFunction ("table", &CFunc::mapToTable<K, V>);
+  }
+
+  template <class T>
+  Class<std::set<T> > beginStdSet (char const* name)
+  {
+    typedef std::set<T> LT;
+    return beginClass<LT> (name)
+      .addVoidConstructor ()
+      .addFunction ("clear", (void (LT::*)())&LT::clear)
+      .addFunction ("empty", &LT::empty)
+      .addFunction ("size", &LT::size)
+      .addExtCFunction ("add", &CFunc::tableToSet<T>)
+      .addExtCFunction ("iter", &CFunc::setIter<T>)
+      .addExtCFunction ("table", &CFunc::setToTable<T>);
+  }
+
+  template <class T>
+  Class<std::list<T> > beginStdList (char const* name)
+  {
+    typedef std::list<T> LT;
+    return beginClass<LT> (name)
+      .addVoidConstructor ()
+      .addFunction ("empty", &LT::empty)
+      .addFunction ("size", &LT::size)
+      .addFunction ("reverse", &LT::reverse)
+      .addFunction ("unique", (void (LT::*)())&LT::unique)
+      .addFunction ("push_back", (void (LT::*)(const T&))&LT::push_back)
+      .addExtCFunction ("add", &CFunc::tableToList<T, LT>)
+      .addExtCFunction ("iter", &CFunc::listIter<T, LT>)
+      .addExtCFunction ("table", &CFunc::listToTable<T, LT>);
+  }
+
+  template <class T>
+  Class<std::vector<T> > beginStdVector (char const* name)
+  {
+    typedef std::vector<T> LT;
+    typedef typename std::vector<T>::reference T_REF;
+    typedef typename std::vector<T>::size_type T_SIZE;
+
+    return beginClass<LT> (name)
+      .addVoidConstructor ()
+      .addFunction ("empty", &LT::empty)
+      .addFunction ("size", &LT::size)
+      .addFunction ("push_back", (void (LT::*)(const T&))&LT::push_back)
+      .addFunction ("at", (T_REF (LT::*)(T_SIZE))&LT::at)
+      .addExtCFunction ("add", &CFunc::tableToList<T, LT>)
+      .addExtCFunction ("iter", &CFunc::listIter<T, LT>)
+      .addExtCFunction ("table", &CFunc::listToTable<T, LT>);
+  }
+
+  //----------------------------------------------------------------------------
+
+  template <class T>
+  Class<boost::shared_ptr<std::list<T> > > beginPtrStdList (char const* name)
+  {
+    typedef std::list<T> LT;
+
+    return beginPtrClass<LT> (name)
+      .addVoidConstructor ()
+      .addPtrFunction ("empty", &LT::empty)
+      .addPtrFunction ("size", &LT::size)
+      .addPtrFunction ("reverse", &LT::reverse)
+      .addPtrFunction ("unique", (void (LT::*)())&LT::unique)
+      .addPtrFunction ("push_back", (void (LT::*)(const T&))&LT::push_back)
+      .addExtCFunction ("add", &CFunc::ptrTableToList<T, LT>)
+      .addExtCFunction ("iter", &CFunc::ptrListIter<T, LT>)
+      .addExtCFunction ("table", &CFunc::ptrListToTable<T, LT>);
+  }
+
+  template <class T>
+  Class<boost::shared_ptr<std::vector<T> > > beginPtrStdVector (char const* name)
+  {
+    typedef std::vector<T> LT;
+    typedef typename std::vector<T>::reference T_REF;
+    typedef typename std::vector<T>::size_type T_SIZE;
+
+    return beginPtrClass<LT> (name)
+      .addVoidConstructor ()
+      .addPtrFunction ("empty", &LT::empty)
+      .addPtrFunction ("empty", &LT::empty)
+      .addPtrFunction ("size", &LT::size)
+      .addPtrFunction ("push_back", (void (LT::*)(const T&))&LT::push_back)
+      .addPtrFunction ("at", (T_REF (LT::*)(T_SIZE))&LT::at)
+      .addExtCFunction ("add", &CFunc::ptrTableToList<T, LT>)
+      .addExtCFunction ("iter", &CFunc::ptrListIter<T, LT>)
+      .addExtCFunction ("table", &CFunc::ptrListToTable<T, LT>);
+  }
+
   //----------------------------------------------------------------------------
   /**
       Derive a new class for registrations.
@@ -1120,6 +1408,13 @@ public:
   {
     return Class <T> (name, this, ClassInfo <U>::getStaticKey ());
   }
+
+  template <class T, class U>
+  Class <boost::shared_ptr<T> > derivePtrClass (char const* name)
+  {
+    return Class <boost::shared_ptr<T> > (name, this, ClassInfo <boost::shared_ptr<U> >::getStaticKey ());
+  }
+
 };
 
 //------------------------------------------------------------------------------
