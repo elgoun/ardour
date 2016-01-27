@@ -84,6 +84,11 @@ ARDOUR_UI::setup_windows ()
 		return -1;
 	}
 
+	if (create_luawindow ()) {
+		error << _("UI: cannot setup luawindow") << endmsg;
+		return -1;
+	}
+
 	/* all other dialogs are created conditionally */
 
 	we_have_dependents ();

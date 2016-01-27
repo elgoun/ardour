@@ -124,6 +124,7 @@ class ShuttleControl;
 class Splash;
 class TimeInfoBox;
 class Meterbridge;
+class LuaWindow;
 class MidiTracer;
 class NSM_Client;
 class LevelMeterHBox;
@@ -352,6 +353,7 @@ class ARDOUR_UI : public Gtkmm2ext::UI, public ARDOUR::SessionHandlePtr
 	void goto_mixer_window ();
 	void toggle_mixer_window ();
 	void toggle_meterbridge ();
+	void toggle_luawindow ();
         void toggle_editor_mixer ();
 
 	int  setup_windows ();
@@ -620,9 +622,12 @@ class ARDOUR_UI : public Gtkmm2ext::UI, public ARDOUR::SessionHandlePtr
 
 	int         create_mixer ();
 	int         create_editor ();
+	int         create_meterbridge ();
+	int         create_luawindow ();
 
 	Meterbridge  *meterbridge;
-	int         create_meterbridge ();
+	LuaWindow    *luawindow;
+
         /* Dialogs that can be created via new<T> */
 
         WM::Proxy<SpeakerDialog> speaker_config_window;
