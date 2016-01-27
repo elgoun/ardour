@@ -35,6 +35,7 @@
 #include "ardour_ui.h"
 #include "public_editor.h"
 #include "meterbridge.h"
+#include "luawindow.h"
 #include "mixer_ui.h"
 #include "keyboard.h"
 #include "splash.h"
@@ -79,6 +80,7 @@ ARDOUR_UI::connect_dependents_to_session (ARDOUR::Session *s)
 	BootMessage (_("Setup Mixer"));
 	mixer->set_session (s);
 	meterbridge->set_session (s);
+	luawindow->set_session (s);
 
 	/* its safe to do this now */
 
