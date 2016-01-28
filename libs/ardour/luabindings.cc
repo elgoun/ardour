@@ -18,6 +18,8 @@
 
 #include "timecode/bbt_time.h"
 
+#include "ardour/audioengine.h"
+#include "ardour/audio_backend.h"
 #include "ardour/audio_buffer.h"
 #include "ardour/audio_track.h"
 #include "ardour/buffer_set.h"
@@ -195,6 +197,66 @@ LuaBindings::common (lua_State* L)
 		.addConst ("SharePlaylist", ARDOUR::PlaylistDisposition(SharePlaylist))
 		.endNamespace ();
 
+	luabridge::getGlobalNamespace (L)
+		.beginNamespace ("ARDOUR")
+		.beginClass <AudioBackendInfo> ("AudioBackendInfo")
+		.addData ("name", &AudioBackendInfo::name)
+		.endClass()
+		.beginStdVector <const AudioBackendInfo*> ("BackendVector").endClass ()
+
+		.beginNamespace ("ARDOUR")
+		.beginClass <AudioBackend::DeviceStatus> ("DeviceStatus")
+		.addData ("name", &AudioBackend::DeviceStatus::name)
+		.addData ("available", &AudioBackend::DeviceStatus::available)
+		.endClass()
+		.beginStdVector <AudioBackend::DeviceStatus> ("DeviceStatusVector").endClass ()
+		.endNamespace ()
+
+		.beginPtrClass <AudioBackend> ("AudioBackend")
+		.addPtrFunction ("info", &AudioBackend::info)
+		.addPtrFunction ("sample_rate", &AudioBackend::sample_rate)
+		.addPtrFunction ("buffer_size", &AudioBackend::buffer_size)
+		.addPtrFunction ("period_size", &AudioBackend::period_size)
+		.addPtrFunction ("input_channels", &AudioBackend::input_channels)
+		.addPtrFunction ("output_channels", &AudioBackend::output_channels)
+		.addPtrFunction ("dsp_load", &AudioBackend::dsp_load)
+
+		.addPtrFunction ("set_sample_rate", &AudioBackend::set_sample_rate)
+		.addPtrFunction ("set_buffer_size", &AudioBackend::set_buffer_size)
+		.addPtrFunction ("set_peridod_size", &AudioBackend::set_peridod_size)
+
+		.addPtrFunction ("enumerate_drivers", &AudioBackend::enumerate_drivers)
+		.addPtrFunction ("driver_name", &AudioBackend::driver_name)
+		.addPtrFunction ("set_driver", &AudioBackend::set_driver)
+
+		.addPtrFunction ("use_separate_input_and_output_devices", &AudioBackend::use_separate_input_and_output_devices)
+		.addPtrFunction ("enumerate_devices", &AudioBackend::enumerate_devices)
+		.addPtrFunction ("enumerate_input_devices", &AudioBackend::enumerate_input_devices)
+		.addPtrFunction ("enumerate_output_devices", &AudioBackend::enumerate_output_devices)
+		.addPtrFunction ("device_name", &AudioBackend::device_name)
+		.addPtrFunction ("input_device_name", &AudioBackend::input_device_name)
+		.addPtrFunction ("output_device_name", &AudioBackend::output_device_name)
+		.addPtrFunction ("set_device_name", &AudioBackend::set_device_name)
+		.addPtrFunction ("set_input_device_name", &AudioBackend::set_input_device_name)
+		.addPtrFunction ("set_output_device_name", &AudioBackend::set_output_device_name)
+		.endClass()
+
+		.beginClass <AudioEngine> ("AudioEngine")
+		.addStaticFunction ("create", &AudioEngine::create)
+		.addFunction ("available_backends", &AudioEngine::available_backends)
+		.addFunction ("current_backend_name", &AudioEngine::current_backend_name)
+		.addFunction ("set_backend", &AudioEngine::set_backend)
+		.addFunction ("setup_required", &AudioEngine::setup_required)
+		.addFunction ("start", &AudioEngine::start)
+		.addFunction ("stop", &AudioEngine::stop)
+		.addFunction ("get_dsp_load", &AudioEngine::get_dsp_load)
+		.addFunction ("set_device_name", &AudioEngine::set_device_name)
+		.addFunction ("set_sample_rate", &AudioEngine::set_sample_rate)
+		.addFunction ("set_buffer_size", &AudioEngine::set_buffer_size)
+		.addFunction ("get_last_backend_error", &AudioEngine::get_last_backend_error)
+		.endClass()
+		.endNamespace ();
+
 	// basic representation of Session (rt-safe functions only)
 	luabridge::getGlobalNamespace (L)
 		.beginNamespace ("ARDOUR")
@@ -202,6 +264,12 @@ LuaBindings::common (lua_State* L)
 		.addFunction ("scripts_changed", &Session::scripts_changed) // used internally
 		.addFunction ("transport_rolling", &Session::transport_rolling)
 		.addFunction ("request_transport_speed", &Session::request_transport_speed)
+		.addFunction ("request_locate", &Session::request_locate)
+		.addFunction ("request_stop", &Session::request_stop)
+		.addFunction ("last_transport_start", &Session::last_transport_start)
+		.addFunction ("goto_start", &Session::goto_start)
+		.addFunction ("goto_end", &Session::goto_end)
+		.addFunction ("current_start_frame", &Session::current_start_frame)
 		.addFunction ("actively_recording", &Session::actively_recording)
 		.addFunction ("get_routes", &Session::get_routes)
 		.addFunction ("get_tracks", &Session::get_tracks)
