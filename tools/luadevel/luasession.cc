@@ -1,4 +1,6 @@
 #include <stdint.h>
+#include <assert.h>
+
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -20,8 +22,9 @@
 #include "ardour/audioengine.h"
 #include "ardour/filename_extensions.h"
 #include "ardour/luabindings.h"
-#include "ardour/types.h"
 #include "ardour/session.h"
+#include "ardour/types.h"
+#include "ardour/vst_types.h"
 
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -33,14 +36,18 @@ using namespace std;
 using namespace ARDOUR;
 using namespace PBD;
 
+static const char* localedir = LOCALEDIR;
+static PBD::ScopedConnectionList forever_connections;
+static Session *_session = NULL;
+static LuaState lua;
+
 class TestReceiver : public Receiver
 {
   protected:
     void receive (Transmitter::Channel chn, const char * str);
 };
 
-static const char* localedir = LOCALEDIR;
-TestReceiver test_receiver;
+static TestReceiver test_receiver;
 
 void
 TestReceiver::receive (Transmitter::Channel chn, const char * str)
@@ -76,14 +83,6 @@ TestReceiver::receive (Transmitter::Channel chn, const char * str)
 	}
 }
 
-/* temporarily required due to some code design confusion (Feb 2014) */
-
-#include "ardour/vst_types.h"
-
-int vstfx_init (void*) { return 0; }
-void vstfx_exit () {}
-void vstfx_destroy_editor (VSTState*) {}
-
 class MyEventLoop : public sigc::trackable, public EventLoop
 {
 	public:
@@ -104,11 +103,11 @@ class MyEventLoop : public sigc::trackable, public EventLoop
 		Glib::Threads::Mutex   request_buffer_map_lock;
 };
 
-static MyEventLoop *event_loop;
+static MyEventLoop *event_loop = NULL;
 
-
-static void my_lua_print (std::string s) {
-	std::cout << s << "\n";
+static int do_audio_midi_setup (uint32_t desired_sample_rate)
+{
+	return 0;
 }
 
 static void init ()
@@ -126,16 +125,35 @@ static void init ()
 	test_receiver.listen_to (info);
 	test_receiver.listen_to (fatal);
 	test_receiver.listen_to (warning);
+
+	ARDOUR::Session::AudioEngineSetupRequired.connect_same_thread (forever_connections, &do_audio_midi_setup);
+}
+
+static void set_session (ARDOUR::Session *s)
+{
+	_session = s;
+	lua_State* L = lua.getState();
+	LuaBindings::set_session (L, _session);
+}
+
+static void unset_session ()
+{
+	set_session (NULL);
 }
 
 static Session * _load_session (string dir, string state)
 {
 	AudioEngine* engine = AudioEngine::create ();
 
-	// TODO allow to configure engine
-	if (!engine->set_backend ("None (Dummy)", "Unit-Test", "")) {
-		std::cerr << "Cannot create Audio/MIDI engine\n";
-		return 0;
+	if (!engine->current_backend()) {
+		if (!engine->set_backend ("None (Dummy)", "Unit-Test", "")) {
+			std::cerr << "Cannot create Audio/MIDI engine\n";
+			return 0;
+		}
+	}
+
+	if (engine->running()) {
+		engine->stop();
 	}
 
 	float sr;
@@ -169,9 +187,13 @@ static Session * _load_session (string dir, string state)
 	return session;
 }
 
-Session* load_session (string dir, string state)
+static Session* load_session (string dir, string state)
 {
 	Session* s = 0;
+	if (_session) {
+		cerr << "Session already open" << "\n";
+		return 0;
+	}
 	try {
 		s = _load_session (dir, state);
 	} catch (failed_constructor& e) {
@@ -187,34 +209,61 @@ Session* load_session (string dir, string state)
 		cerr << "unknown exception.\n";
 		return 0;
 	}
+	assert (s);
+	set_session (s);
+	s->DropReferences.connect_same_thread (forever_connections, &unset_session);
 	return s;
 }
 
-void unload_session (Session *s)
+static void close_session ()
 {
-	delete s;
-	AudioEngine::instance()->stop ();
-	AudioEngine::destroy ();
+	if (!_session) {
+		cerr << "No open session" << "\n";
+		return;
+	}
+	delete _session;
+	_session = NULL;
 }
 
+static int close_session_lua (lua_State *L)
+{
+	close_session ();
+	return 0;
+}
+
+/* extern VST functions */
+int vstfx_init (void*) { return 0; }
+void vstfx_exit () {}
+void vstfx_destroy_editor (VSTState*) {}
+
+static void my_lua_print (std::string s) {
+	std::cout << s << "\n";
+}
 
 int main (int argc, char **argv)
 {
 	init ();
-	LuaState lua;
 	lua.Print.connect (&my_lua_print);
 	lua_State* L = lua.getState();
 
 	LuaBindings::stddef (L);
 	LuaBindings::common (L);
 	LuaBindings::session (L);
-#if 1
+
 	luabridge::getGlobalNamespace (L)
 		.beginNamespace ("_G")
-		.addFunction ("load_session", load_session) // make single instance, dtor
-		.addFunction ("unload_session", unload_session)
+		.addFunction ("load_session", load_session)
+		.addFunction ("close_session", close_session)
 		.endNamespace ();
-#endif
+
+	luabridge::getGlobalNamespace (L)
+		.beginNamespace ("ARDOUR")
+		.beginClass <Session> ("Session")
+		.addExtCFunction ("close", &close_session_lua)
+		.endClass ()
+		.endNamespace ();
+
+
 
 	char *line;
 	while ((line = readline ("> "))) {
@@ -231,6 +280,13 @@ int main (int argc, char **argv)
 		}
 	}
 	printf("\n");
+
+	if (_session) {
+		close_session ();
+	}
+
+	AudioEngine::instance()->stop ();
+	AudioEngine::destroy ();
 
 	// cleanup
 	ARDOUR::cleanup ();
