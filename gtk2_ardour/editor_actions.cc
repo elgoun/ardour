@@ -138,6 +138,7 @@ Editor::register_actions ()
 	ActionManager::register_action (editor_menu_actions, X_("Subframes"), _("Subframes"));
 	ActionManager::register_action (editor_menu_actions, X_("SyncMenu"), _("Sync"));
 	ActionManager::register_action (editor_menu_actions, X_("TempoMenu"), _("Tempo"));
+	ActionManager::register_action (editor_menu_actions, X_("ActionScripts"), _("Scripted Actions"));
 	ActionManager::register_action (editor_menu_actions, X_("Timecode"), _("Timecode fps"));
 	ActionManager::register_action (editor_menu_actions, X_("TrackHeightMenu"), _("Height"));
 	ActionManager::register_action (editor_menu_actions, X_("TrackMenu"), _("Track"));
@@ -243,6 +244,7 @@ Editor::register_actions ()
 		string const n = string_compose (_("Locate to Mark %1"), i);
 		reg_sens (editor_actions, a.c_str(), n.c_str(), sigc::bind (sigc::mem_fun (*this, &Editor::goto_nth_marker), i - 1));
 	}
+
 
 	reg_sens (editor_actions, "jump-forward-to-mark", _("Jump to Next Mark"), sigc::mem_fun(*this, &Editor::jump_forward_to_mark));
 	reg_sens (editor_actions, "alternate-jump-forward-to-mark", _("Jump to Next Mark"), sigc::mem_fun(*this, &Editor::jump_forward_to_mark));
@@ -477,6 +479,14 @@ Editor::register_actions ()
 	smart_mode_button.set_related_action (smart_mode_action);
 	smart_mode_button.set_text (_("Smart"));
 	smart_mode_button.set_name ("mouse mode button");
+
+	act = reg_sens (editor_actions, "manage-action-scripts", _("Manage"),
+				sigc::mem_fun(*this, &Editor::manage_action_scripts));
+	for (int i = 1; i <= 9; ++i) {
+		string const a = string_compose (X_("script-action-%1"), i);
+		string const n = string_compose (_("Unset #%1"), i);
+		reg_sens (editor_actions, a.c_str(), n.c_str(), sigc::bind (sigc::mem_fun (*this, &Editor::trigger_script), i - 1));
+	}
 
 	act = ActionManager::register_radio_action (mouse_mode_actions, mouse_mode_group, "set-mouse-mode-object", _("Object Tool"), sigc::bind (sigc::mem_fun(*this, &Editor::mouse_mode_toggled), Editing::MouseObject));
 	mouse_move_button.set_related_action (act);

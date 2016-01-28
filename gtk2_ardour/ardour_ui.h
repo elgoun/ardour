@@ -125,6 +125,7 @@ class Splash;
 class TimeInfoBox;
 class Meterbridge;
 class LuaWindow;
+class LuaScriptManager;
 class MidiTracer;
 class NSM_Client;
 class LevelMeterHBox;
@@ -206,6 +207,8 @@ class ARDOUR_UI : public Gtkmm2ext::UI, public ARDOUR::SessionHandlePtr
 	void toggle_mixer_list();
 	void toggle_monitor_section_visibility ();
 	void toggle_keep_tearoffs();
+
+	void lua_script_manager();
 
 	static PublicEditor* _instance;
 
@@ -642,6 +645,7 @@ class ARDOUR_UI : public Gtkmm2ext::UI, public ARDOUR::SessionHandlePtr
         WM::Proxy<RouteParams_UI> route_params;
         WM::Proxy<EngineControl> audio_midi_setup;
         WM::Proxy<ExportVideoDialog> export_video_dialog;
+        WM::Proxy<LuaScriptManager> lua_script_window;
 
         /* Windows/Dialogs that require a creator method */
 

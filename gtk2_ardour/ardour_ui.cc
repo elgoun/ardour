@@ -124,6 +124,7 @@ typedef uint64_t microseconds_t;
 #include "keyboard.h"
 #include "keyeditor.h"
 #include "location_ui.h"
+#include "lua_script_manager.h"
 #include "luawindow.h"
 #include "main_clock.h"
 #include "missing_file_dialog.h"
@@ -275,6 +276,7 @@ ARDOUR_UI::ARDOUR_UI (int *argcp, char **argvp[], const char* localedir)
 	, route_params (X_("inspector"), _("Tracks and Busses"))
 	, audio_midi_setup (X_("audio-midi-setup"), _("Audio/MIDI Setup"))
 	, export_video_dialog (X_("video-export"), _("Video Export Dialog"))
+	, lua_script_window (X_("script-manager"), _("Script Manager"))
 	, session_option_editor (X_("session-options-editor"), _("Properties"), boost::bind (&ARDOUR_UI::create_session_option_editor, this))
 	, add_video_dialog (X_("add-video"), _("Add Tracks/Busses"), boost::bind (&ARDOUR_UI::create_add_video_dialog, this))
 	, bundle_manager (X_("bundle-manager"), _("Bundle Manager"), boost::bind (&ARDOUR_UI::create_bundle_manager, this))
@@ -426,6 +428,7 @@ ARDOUR_UI::ARDOUR_UI (int *argcp, char **argvp[], const char* localedir)
 		audio_port_matrix.set_state (*ui_xml);
 		midi_port_matrix.set_state (*ui_xml);
 		export_video_dialog.set_state (*ui_xml);
+		lua_script_window.set_state (*ui_xml);
 	}
 
 	WM::Manager::instance().register_window (&key_editor);
@@ -438,6 +441,7 @@ ARDOUR_UI::ARDOUR_UI (int *argcp, char **argvp[], const char* localedir)
 	WM::Manager::instance().register_window (&route_params);
 	WM::Manager::instance().register_window (&audio_midi_setup);
 	WM::Manager::instance().register_window (&export_video_dialog);
+	WM::Manager::instance().register_window (&lua_script_window);
 	WM::Manager::instance().register_window (&bundle_manager);
 	WM::Manager::instance().register_window (&location_ui);
 	WM::Manager::instance().register_window (&big_clock_window);
