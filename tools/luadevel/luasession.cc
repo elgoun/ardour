@@ -37,78 +37,83 @@ using namespace ARDOUR;
 using namespace PBD;
 
 static const char* localedir = LOCALEDIR;
-static PBD::ScopedConnectionList forever_connections;
+static PBD::ScopedConnectionList engine_connections;
+static PBD::ScopedConnectionList session_connections;
 static Session *_session = NULL;
-static LuaState lua;
+static LuaState *lua;
 
-class TestReceiver : public Receiver
+class LuaReceiver : public Receiver
 {
   protected:
-    void receive (Transmitter::Channel chn, const char * str);
+    void receive (Transmitter::Channel chn, const char * str)
+		{
+			const char *prefix = "";
+
+			switch (chn) {
+				case Transmitter::Error:
+					prefix = "[ERROR]: ";
+					break;
+				case Transmitter::Info:
+					/* ignore */
+					return;
+				case Transmitter::Warning:
+					prefix = "[WARNING]: ";
+					break;
+				case Transmitter::Fatal:
+					prefix = "[FATAL]: ";
+					break;
+				case Transmitter::Throw:
+					/* this isn't supposed to happen */
+					abort ();
+			}
+
+			/* note: iostreams are already thread-safe: no external
+				 lock required.
+				 */
+
+			std::cout << prefix << str << std::endl;
+
+			if (chn == Transmitter::Fatal) {
+				::exit (9);
+			}
+		}
 };
-
-static TestReceiver test_receiver;
-
-void
-TestReceiver::receive (Transmitter::Channel chn, const char * str)
-{
-	const char *prefix = "";
-
-	switch (chn) {
-	case Transmitter::Error:
-		prefix = ": [ERROR]: ";
-		break;
-	case Transmitter::Info:
-		/* ignore */
-		return;
-	case Transmitter::Warning:
-		prefix = ": [WARNING]: ";
-		break;
-	case Transmitter::Fatal:
-		prefix = ": [FATAL]: ";
-		break;
-	case Transmitter::Throw:
-		/* this isn't supposed to happen */
-		abort ();
-	}
-
-	/* note: iostreams are already thread-safe: no external
-	   lock required.
-	*/
-
-	std::cout << prefix << str << std::endl;
-
-	if (chn == Transmitter::Fatal) {
-		::exit (9);
-	}
-}
 
 class MyEventLoop : public sigc::trackable, public EventLoop
 {
 	public:
 		MyEventLoop (std::string const& name) : EventLoop (name) {
-			run_loop_thread = Glib::Threads::Thread::self();
+			run_loop_thread = Glib::Threads::Thread::self ();
 		}
 
-		void call_slot (InvalidationRecord*, const boost::function<void()>& f) {
-			if (Glib::Threads::Thread::self() == run_loop_thread) {
+		void call_slot (InvalidationRecord* ir, const boost::function<void()>& f) {
+			if (Glib::Threads::Thread::self () == run_loop_thread) {
+				//cout << string_compose ("%1/%2 direct dispatch of call slot via functor @ %3, invalidation %4\n", event_loop_name(), pthread_name(), &f, ir);
 				f ();
+			} else {
+				//cout << string_compose ("%1/%2 queue call-slot using functor @ %3, invalidation %4\n", event_loop_name(), pthread_name(), &f, ir);
+				assert (!ir);
+				f (); // XXX TODO, queue and process during run ()
 			}
 		}
 
-		Glib::Threads::Mutex& slot_invalidation_mutex() { return request_buffer_map_lock; }
+		void run () {
+			; // TODO process Events, if any
+		}
+
+		Glib::Threads::Mutex& slot_invalidation_mutex () { return request_buffer_map_lock; }
 
 	private:
 		Glib::Threads::Thread* run_loop_thread;
 		Glib::Threads::Mutex   request_buffer_map_lock;
 };
 
-static MyEventLoop *event_loop = NULL;
-
 static int do_audio_midi_setup (uint32_t desired_sample_rate)
 {
-	return 0;
+	return AudioEngine::instance ()->start ();
 }
+
+static MyEventLoop *event_loop = NULL;
 
 static void init ()
 {
@@ -117,43 +122,49 @@ static void init ()
 		::exit (EXIT_FAILURE);
 	}
 
-	event_loop = new MyEventLoop ("util");
+	assert (!event_loop);
+	event_loop = new MyEventLoop ("lua");
 	EventLoop::set_event_loop_for_thread (event_loop);
-	SessionEvent::create_per_thread_pool ("util", 512);
+	SessionEvent::create_per_thread_pool ("lua", 512);
 
-	test_receiver.listen_to (error);
-	test_receiver.listen_to (info);
-	test_receiver.listen_to (fatal);
-	test_receiver.listen_to (warning);
+	static LuaReceiver lua_receiver;
 
-	ARDOUR::Session::AudioEngineSetupRequired.connect_same_thread (forever_connections, &do_audio_midi_setup);
+	lua_receiver.listen_to (error);
+	lua_receiver.listen_to (info);
+	lua_receiver.listen_to (fatal);
+	lua_receiver.listen_to (warning);
+
+	ARDOUR::Session::AudioEngineSetupRequired.connect_same_thread (engine_connections, &do_audio_midi_setup);
 }
 
 static void set_session (ARDOUR::Session *s)
 {
 	_session = s;
-	lua_State* L = lua.getState();
+	assert (lua);
+	lua_State* L = lua->getState ();
 	LuaBindings::set_session (L, _session);
+	lua->collect_garbage (); // drop references
 }
 
 static void unset_session ()
 {
+	session_connections.drop_connections ();
 	set_session (NULL);
 }
 
 static Session * _load_session (string dir, string state)
 {
-	AudioEngine* engine = AudioEngine::create ();
+	AudioEngine* engine = AudioEngine::instance ();
 
-	if (!engine->current_backend()) {
+	if (!engine->current_backend ()) {
 		if (!engine->set_backend ("None (Dummy)", "Unit-Test", "")) {
 			std::cerr << "Cannot create Audio/MIDI engine\n";
 			return 0;
 		}
 	}
 
-	if (engine->running()) {
-		engine->stop();
+	if (engine->running ()) {
+		engine->stop ();
 	}
 
 	float sr;
@@ -183,7 +194,6 @@ static Session * _load_session (string dir, string state)
 	}
 
 	Session* session = new Session (*engine, dir, state);
-	engine->set_session (session);
 	return session;
 }
 
@@ -197,13 +207,13 @@ static Session* load_session (string dir, string state)
 	try {
 		s = _load_session (dir, state);
 	} catch (failed_constructor& e) {
-		cerr << "failed_constructor: " << e.what() << "\n";
+		cerr << "failed_constructor: " << e.what () << "\n";
 		return 0;
 	} catch (AudioEngine::PortRegistrationFailure& e) {
-		cerr << "PortRegistrationFailure: " << e.what() << "\n";
+		cerr << "PortRegistrationFailure: " << e.what () << "\n";
 		return 0;
 	} catch (exception& e) {
-		cerr << "exception: " << e.what() << "\n";
+		cerr << "exception: " << e.what () << "\n";
 		return 0;
 	} catch (...) {
 		cerr << "unknown exception.\n";
@@ -211,22 +221,22 @@ static Session* load_session (string dir, string state)
 	}
 	assert (s);
 	set_session (s);
-	s->DropReferences.connect_same_thread (forever_connections, &unset_session);
+	s->DropReferences.connect_same_thread (session_connections, &unset_session);
 	return s;
 }
 
 static void close_session ()
 {
-	if (!_session) {
-		cerr << "No open session" << "\n";
-		return;
-	}
 	delete _session;
-	_session = NULL;
+	assert (!_session);
 }
 
 static int close_session_lua (lua_State *L)
 {
+	if (!_session) {
+		cerr << "No open session" << "\n";
+		return 0;
+	}
 	close_session ();
 	return 0;
 }
@@ -240,11 +250,13 @@ static void my_lua_print (std::string s) {
 	std::cout << s << "\n";
 }
 
-int main (int argc, char **argv)
+static void setup_lua ()
 {
-	init ();
-	lua.Print.connect (&my_lua_print);
-	lua_State* L = lua.getState();
+	assert (!lua);
+
+	lua = new LuaState ();
+	lua->Print.connect (&my_lua_print);
+	lua_State* L = lua->getState ();
 
 	LuaBindings::stddef (L);
 	LuaBindings::common (L);
@@ -263,29 +275,45 @@ int main (int argc, char **argv)
 		.endClass ()
 		.endNamespace ();
 
+	// push instance to global namespace (C++ lifetime)
+	luabridge::push <AudioEngine *> (L, AudioEngine::create ());
+	lua_setglobal (L, "AudioEngine");
+}
 
+int main (int argc, char **argv)
+{
+	init ();
+	setup_lua ();
 
 	char *line;
 	while ((line = readline ("> "))) {
+		event_loop->run();
 		if (!strcmp (line, "quit")) {
 			break;
 		}
-		if (strlen(line) == 0) {
+		if (strlen (line) == 0) {
 			continue;
 		}
-		if (!lua.do_command (line)) {
-			add_history(line); // OK
+		if (!lua->do_command (line)) {
+			add_history (line); // OK
 		} else {
-			add_history(line); // :)
+			add_history (line); // :)
 		}
+		event_loop->run();
+		free (line);
 	}
-	printf("\n");
+	printf ("\n");
 
 	if (_session) {
 		close_session ();
 	}
 
-	AudioEngine::instance()->stop ();
+	engine_connections.drop_connections ();
+
+	delete lua;
+	lua = NULL;
+
+	AudioEngine::instance ()->stop ();
 	AudioEngine::destroy ();
 
 	// cleanup

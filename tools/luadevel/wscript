@@ -16,13 +16,10 @@ def options(opt):
     autowaf.set_options(opt)
 
 def configure(conf):
-    if not "dummy" in conf.env['BACKENDS']:
-        print ('lua-session depend on the dummy backend.')
-
     conf.load('misc')
     conf.load('compiler_cxx')
     conf.check_cc(function_name='readline',
-            header_name='readline/readline.h',
+            header_name='stdio.h readline/readline.h',
             lib='readline',
             uselib_store='READLINE',
             mandatory=False)
@@ -35,23 +32,27 @@ def build(bld):
     # no wine
     if bld.is_defined('WINDOWS_VST_SUPPORT') and bld.env['build_target'] != 'mingw':
         return
-    # not just yet..
-    if bld.env['build_target'] == 'mingw':
-            return;
 
-    #  TEST/DEVEL TOOL
+    # TEST/DEVEL TOOL #######################
     obj = bld (features = 'cxx c cxxprogram')
     obj.source       = 'devel.cc'
     obj.target       = 'devel'
     obj.uselib       = ['SIGCPP', 'READLINE']
     obj.use          = ['liblua']
     obj.install_path = None
+    #########################################
 
-    # real thing
-    if not "dummy" in bld.env['BACKENDS']:
-        print ('luasession depend on the dummy backend.')
-        return
+    # commandline luasession wrapper
+    obj              = bld(features = 'subst')
+    obj.source       = 'ardour-lua.sh.in'
+    obj.target       = 'ardour' + str (bld.env['MAJOR']) + '-lua'
+    obj.chmod        = Utils.O755
+    obj.install_path = bld.env['BINDIR']
+    obj.LIBDIR       = os.path.normpath(bld.env['DLLDIR'])
+    obj.DATADIR      = os.path.normpath(bld.env['DATADIR'])
+    obj.CONFDIR      = os.path.normpath(bld.env['CONFDIR'])
 
+    # commandline luasession
     obj = bld (features = 'cxx c cxxprogram')
     obj.source       = 'luasession.cc'
     obj.target       = 'luasession'
@@ -81,12 +82,11 @@ def build(bld):
         obj.uselib += ' AUDIOUNITS OSX'
         obj.use    += ' libappleutility'
 
-    if bld.env['build_target'] == 'mingw':
-        if bld.env['DEBUG'] == False:
-            obj.linkflags = ['-mwindows']
+    #if bld.env['build_target'] == 'mingw':
+    #    if bld.env['DEBUG'] == False:
+    #        obj.linkflags = ['-mwindows']
 
     if bld.is_defined('NEED_INTL'):
         obj.linkflags = ' -lintl'
 
-    #obj.install_path = bld.env['LIBDIR'] + '/utils'
-    obj.install_path = None
+    obj.install_path = bld.env['DLLDIR']
