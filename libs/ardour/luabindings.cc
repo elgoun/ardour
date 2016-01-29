@@ -242,7 +242,6 @@ LuaBindings::common (lua_State* L)
 		.endClass()
 
 		.beginClass <AudioEngine> ("AudioEngine")
-		.addStaticFunction ("create", &AudioEngine::create)
 		.addFunction ("available_backends", &AudioEngine::available_backends)
 		.addFunction ("current_backend_name", &AudioEngine::current_backend_name)
 		.addFunction ("set_backend", &AudioEngine::set_backend)
