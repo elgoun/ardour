@@ -38,8 +38,6 @@ public:
 
 	lua_State* getState () { return L; }
 
-	void reset ();
-
 protected:
 	lua_State* L;
 

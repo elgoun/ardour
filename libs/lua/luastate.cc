@@ -53,12 +53,6 @@ LuaState::init() {
 	lua_setglobal (L, "print");
 }
 
-void
-LuaState::reset() {
-	lua_close (L);
-	init();
-}
-
 int
 LuaState::do_command (std::string cmd) {
 	int result = luaL_dostring (L, cmd.c_str());
