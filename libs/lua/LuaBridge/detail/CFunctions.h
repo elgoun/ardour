@@ -351,12 +351,11 @@ struct CFunc
       MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
       assert (fnptr != 0);
       ArgList <Params, 2> args (L);
-      ReturnType rt = FuncTraits <MemFnPtr>::call (t, fnptr, args);
+      Stack <ReturnType>::push (L, FuncTraits <MemFnPtr>::call (t, fnptr, args));
       LuaRef v (newTable (L));
-      v[1] = rt;
-      FuncArgs <Params, 1>::refs (v, args);
+      FuncArgs <Params, 0>::refs (v, args);
       v.push(L);
-      return 1;
+      return 2;
     }
   };
 
@@ -374,12 +373,11 @@ struct CFunc
       MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
       assert (fnptr != 0);
       ArgList <Params, 2> args(L);
-      ReturnType rt = FuncTraits <MemFnPtr>::call (t, fnptr, args);
+      Stack <ReturnType>::push (L, FuncTraits <MemFnPtr>::call (t, fnptr, args));
       LuaRef v (newTable (L));
-      v[1] = rt;
-      FuncArgs <Params, 1>::refs (v, args);
+      FuncArgs <Params, 0>::refs (v, args);
       v.push(L);
-      return 1;
+      return 2;
     }
   };
 
