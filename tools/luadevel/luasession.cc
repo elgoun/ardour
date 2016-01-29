@@ -21,6 +21,7 @@
 #include "ardour/ardour.h"
 #include "ardour/audioengine.h"
 #include "ardour/filename_extensions.h"
+#include "ardour/filesystem_paths.h"
 #include "ardour/luabindings.h"
 #include "ardour/session.h"
 #include "ardour/types.h"
@@ -219,6 +220,7 @@ static Session* load_session (string dir, string state)
 		cerr << "unknown exception.\n";
 		return 0;
 	}
+	Glib::usleep (1000000); // allo signal propagation, callback/thread-pool setup
 	assert (s);
 	set_session (s);
 	s->DropReferences.connect_same_thread (session_connections, &unset_session);
@@ -250,6 +252,12 @@ static void my_lua_print (std::string s) {
 	std::cout << s << "\n";
 }
 
+static void delay (float d) {
+	if (d > 0) {
+		Glib::usleep (d * 1000000);
+	}
+}
+
 static void setup_lua ()
 {
 	assert (!lua);
@@ -264,8 +272,9 @@ static void setup_lua ()
 
 	luabridge::getGlobalNamespace (L)
 		.beginNamespace ("_G")
-		.addFunction ("load_session", load_session)
-		.addFunction ("close_session", close_session)
+		.addFunction ("load_session", &load_session)
+		.addFunction ("close_session", &close_session)
+		.addFunction ("sleep", &delay)
 		.endNamespace ();
 
 	luabridge::getGlobalNamespace (L)
@@ -284,6 +293,11 @@ int main (int argc, char **argv)
 {
 	init ();
 	setup_lua ();
+
+	using_history ();
+	std::string histfile = Glib::build_filename (user_config_directory(), "/luahist");
+
+	read_history (histfile.c_str());
 
 	char *line;
 	while ((line = readline ("> "))) {
@@ -312,6 +326,8 @@ int main (int argc, char **argv)
 
 	delete lua;
 	lua = NULL;
+
+	write_history (histfile.c_str());
 
 	AudioEngine::instance ()->stop ();
 	AudioEngine::destroy ();
