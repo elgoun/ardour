@@ -815,6 +815,13 @@ private:
       return *this;
     }
 
+    template <class MemFn>
+    Class <T>& addRefFunction (char const* name, MemFn mf)
+    {
+      CFunc::CallMemberRefFunctionHelper <MemFn, FuncTraits <MemFn>::isConstMemberFunction>::add (L, name, mf);
+      return *this;
+    }
+
 
     //--------------------------------------------------------------------------
     /**
