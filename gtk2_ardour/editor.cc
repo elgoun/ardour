@@ -106,6 +106,7 @@
 #include "gui_object.h"
 #include "gui_thread.h"
 #include "keyboard.h"
+#include "luainstance.h"
 #include "marker.h"
 #include "midi_region_view.h"
 #include "midi_time_axis.h"
@@ -805,6 +806,9 @@ Editor::Editor ()
 
 	setup_fade_images ();
 
+	LuaInstance::instance(); // instantiate
+	LuaInstance::instance()->ActionChanged.connect (sigc::mem_fun (*this, &Editor::set_script_action_name));
+
 	instant_save ();
 }
 
@@ -1425,6 +1429,8 @@ Editor::set_session (Session *t)
 	_session->register_with_memento_command_factory(_selection_memento->id(), _selection_memento);
 
 	ActionManager::ui_manager->signal_pre_activate().connect (sigc::mem_fun (*this, &Editor::action_pre_activated));
+
+	LuaInstance::instance()->set_session(_session);
 
 	start_updating_meters ();
 }
@@ -2470,7 +2476,7 @@ Editor::set_state (const XMLNode& node, int /*version*/)
 		}
 	}
 
-	return 0;
+	return LuaInstance::instance()->set_state(node);
 }
 
 XMLNode&
@@ -2567,6 +2573,8 @@ Editor::get_state ()
 
 	snprintf (buf, sizeof (buf), "%" PRId64, nudge_clock->current_duration());
 	node->add_property ("nudge-clock-value", buf);
+
+	node->add_child_nocopy (LuaInstance::instance()->get_state());
 
 	return *node;
 }
@@ -5805,6 +5813,30 @@ Editor::session_going_away ()
 	SessionHandlePtr::session_going_away ();
 }
 
+void
+Editor::manage_action_scripts ()
+{
+	ARDOUR_UI::instance()->lua_script_manager();
+}
+
+void
+Editor::trigger_script (int i)
+{
+	LuaInstance::instance()-> call_action (i);
+}
+
+void
+Editor::set_script_action_name (int i, const std::string& n)
+{
+	string const a = string_compose (X_("script-action-%1"), i + 1);
+	Glib::RefPtr<Action> act = ActionManager::get_action(X_("Editor"), a.c_str());
+	assert (act);
+	if (n.empty ()) {
+		act->set_label (string_compose (_("Unset #%1"), i + 1));
+	} else {
+		act->set_label (n);
+	}
+}
 
 void
 Editor::show_editor_list (bool yn)
