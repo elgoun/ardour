@@ -18,12 +18,54 @@
 
 #include "gtkmm2ext/gui_thread.h"
 
+#include "ardour/audioengine.h"
+#include "ardour/diskstream.h"
+#include "ardour/plugin_manager.h"
+#include "ardour/route.h"
+#include "ardour/session.h"
+
 #include "ardour_ui.h"
 #include "public_editor.h"
 #include "region_selection.h"
 #include "luainstance.h"
+#include "luasignal.h"
 
 #include "i18n.h"
+
+namespace LuaSignal {
+
+#define STATIC(name,c,p) else if (!strcmp(type, #name)) {return name;}
+#define SESSION(name,c,p) else if (!strcmp(type, #name)) {return name;}
+#define ENGINE(name,c,p) else if (!strcmp(type, #name)) {return name;}
+
+LuaSignal
+str2luasignal (const std::string &str) {
+	const char* type = str.c_str();
+	if (0) { }
+# include "luasignal_syms.h"
+	else {
+		PBD::fatal << string_compose (_("programming error: %1: %2"), "Impossible LuaSignal type", str) << endmsg;
+		abort(); /*NOTREACHED*/
+	}
+}
+#undef STATIC
+#undef SESSION
+#undef ENGINE
+
+#define STATIC(name,c,p) N_(#name),
+#define SESSION(name,c,p) N_(#name),
+#define ENGINE(name,c,p) N_(#name),
+const char *luasignalstr[] = {
+# include "luasignal_syms.h"
+	0
+};
+
+#undef STATIC
+#undef SESSION
+#undef ENGINE
+}; // namespace
+
+////////////////////////////////////////////////////////////////////////////////
 
 #define xstr(s) stringify(s)
 #define stringify(s) #s
@@ -36,6 +78,13 @@ LuaInstance::register_classes (lua_State* L)
 	LuaBindings::stddef (L);
 	LuaBindings::common (L);
 	LuaBindings::session (L);
+
+	luabridge::getGlobalNamespace (L)
+		.beginNamespace ("ARDOUR")
+		.beginClass <boost::any> ("Any")
+		// TODO any_cast<>
+		.endClass ()
+		.endNamespace ();
 
 	luabridge::getGlobalNamespace (L)
 		.beginNamespace ("ARDOUR")
@@ -67,8 +116,16 @@ LuaInstance::register_classes (lua_State* L)
 		.endClass ()
 		.endNamespace ();
 
+#define ENGINE(name,c,p) .addConst (stringify(name), (LuaSignal::LuaSignal)LuaSignal::name)
+#define STATIC(name,c,p) .addConst (stringify(name), (LuaSignal::LuaSignal)LuaSignal::name)
+#define SESSION(name,c,p) .addConst (stringify(name), (LuaSignal::LuaSignal)LuaSignal::name)
 	luabridge::getGlobalNamespace (L)
-		.beginNamespace ("Editing")
+		.beginNamespace ("LuaSignal")
+#   include "luasignal_syms.h"
+		.endNamespace ();
+#undef ENGINE
+#undef SESSION
+#undef STATIC
 
 #undef ZOOMFOCUS
 #undef SNAPTYPE
@@ -87,7 +144,9 @@ LuaInstance::register_classes (lua_State* L)
 #define IMPORTMODE(NAME) .addConst (stringify(NAME), (Editing::ImportMode)Editing::NAME)
 #define IMPORTPOSITION(NAME) .addConst (stringify(NAME), (Editing::ImportPosition)Editing::NAME)
 #define IMPORTDISPOSITION(NAME) .addConst (stringify(NAME), (Editing::ImportDisposition)Editing::NAME)
-	#include "editing_syms.h"
+	luabridge::getGlobalNamespace (L)
+		.beginNamespace ("Editing")
+#		include "editing_syms.h"
 		.endNamespace ();
 }
 
@@ -131,6 +190,15 @@ LuaInstance::LuaInstance ()
 
 LuaInstance::~LuaInstance ()
 {
+	delete _lua_call_action;
+	delete _lua_add_action;
+	delete _lua_del_action;
+	delete _lua_get_action;
+	delete _lua_call_hook;
+
+	delete _lua_load;
+	delete _lua_save;
+	_callbacks.clear();
 }
 
 void
@@ -243,6 +311,7 @@ LuaInstance::init ()
 		_lua_del_action = new luabridge::LuaRef(lua_mgr["remove"]);
 		_lua_get_action = new luabridge::LuaRef(lua_mgr["get"]);
 		_lua_call_action = new luabridge::LuaRef(lua_mgr["call"]);
+		_lua_call_hook = 0; // TODO
 		_lua_save = new luabridge::LuaRef(lua_mgr["save"]);
 		_lua_load = new luabridge::LuaRef(lua_mgr["restore"]);
 
@@ -268,6 +337,10 @@ void LuaInstance::set_session (Session* s)
 
 	lua_State* L = lua.getState();
 	LuaBindings::set_session (L, _session);
+
+	for (LuaCallbackList::iterator i = _callbacks.begin(); i != _callbacks.end(); ++i) {
+		(*i)->set_session (s);
+	}
 }
 
 void
@@ -316,6 +389,7 @@ LuaInstance::set_state (const XMLNode& node)
 			g_free (buf);
 		}
 	}
+	// TODO restore hooks, _callbacks
 
 	return 0;
 }
@@ -454,4 +528,122 @@ LuaInstance::lua_action (const int id, std::string& name, std::string& script, L
 		return false;
 	}
 	return false;
+}
+
+int
+LuaInstance::register_lua_slot (const std::string& script, const ARDOUR::LuaScriptParamList& args)
+{
+	/* parse script, get ActionHook(s) from script */
+	ActionHook ah;
+	/* register script w/args, get entry-point / ID */
+	try {
+		int id = -1;
+		LuaCallbackPtr p (new LuaCallback (_session, ah, _lua_call_hook, id));
+		_callbacks.push_back (p);
+		return id;
+	} catch (luabridge::LuaException const& e) {
+		cerr << "LuaException:" << e.what () << endl;
+	}
+	return 0;
+}
+
+bool
+LuaInstance::unregister_lua_slot (const int)
+{
+	return false; // error
+}
+
+bool
+LuaInstance::get_lua_slot (const int, ActionHook&, std::string&, ARDOUR::LuaScriptParamList&)
+{
+	return false; // error
+}
+
+
+LuaCallback::LuaCallback (Session *s, const ActionHook& ah, luabridge::LuaRef const * const cb, const int id)
+	: SessionHandlePtr (s)
+	, _signals (ah)
+	, _call (new luabridge::LuaRef(*cb))
+	, _id (id)
+{
+	reconnect ();
+}
+
+LuaCallback::~LuaCallback ()
+{
+	delete _call;
+}
+
+void
+LuaCallback::set_session (ARDOUR::Session *s)
+{
+	SessionHandlePtr::set_session (s);
+	reconnect();
+}
+
+void
+LuaCallback::session_going_away ()
+{
+	reconnect();
+}
+
+void
+LuaCallback::reconnect ()
+{
+	_connections.drop_connections ();
+	for (uint32_t i = 0; i < LuaSignal::LAST_SIGNAL; ++i) {
+		if (_signals[i]) {
+#define ENGINE(n,c,p) else if (i == LuaSignal::n) { connect_ ## p (LuaSignal::n, &(AudioEngine::instance()->c)); }
+#define SESSION(n,c,p) else if (i == LuaSignal::n) { if (_session) { connect_ ## p (LuaSignal::n, &(_session->c)); } }
+#define STATIC(n,c,p) else if (i == LuaSignal::n) { connect_ ## p (LuaSignal::n, c); }
+			if (0) {}
+#			include "luasignal_syms.h"
+			else {
+				PBD::fatal << string_compose (_("programming error: %1: %2"), "Impossible LuaSignal type", i) << endmsg;
+				abort(); /*NOTREACHED*/
+			}
+#undef ENGINE
+#undef SESSION
+#undef STATIC
+		}
+	}
+}
+
+template <typename S> void
+LuaCallback::connect_0 (enum LuaSignal::LuaSignal ls, S *signal) {
+	signal->connect (
+			_connections, invalidator (*this),
+			boost::bind (&LuaCallback::proxy_0, this, ls),
+			gui_context());
+}
+
+template <typename C1> void
+LuaCallback::connect_1 (enum LuaSignal::LuaSignal ls, PBD::Signal1<void, C1> *signal) {
+	signal->connect (
+			_connections, invalidator (*this),
+			boost::bind (&LuaCallback::proxy_1<C1>, this, ls, _1),
+			gui_context());
+}
+
+template <typename C1, typename C2> void
+LuaCallback::connect_2 (enum LuaSignal::LuaSignal ls, PBD::Signal2<void, C1, C2> *signal) {
+	signal->connect (
+			_connections, invalidator (*this),
+			boost::bind (&LuaCallback::proxy_2<C1, C2>, this, ls, _1, _2),
+			gui_context());
+}
+
+void
+LuaCallback::proxy_0 (enum LuaSignal::LuaSignal ls) {
+	(*_call)(_id, (int)ls);
+}
+
+template <typename C1> void
+LuaCallback::proxy_1 (enum LuaSignal::LuaSignal ls, C1 a1) {
+	(*_call)(_id, (int)ls, a1);
+}
+
+template <typename C1, typename C2> void
+LuaCallback::proxy_2 (enum LuaSignal::LuaSignal ls, C1 a1, C2 a2) {
+	(*_call)(_id, (int)ls, a1, a2);
 }
